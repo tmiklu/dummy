@@ -1,0 +1,78 @@
+INTERNAL_NET="10.100.100."
+
+DOMAIN="example.com"
+
+servers = {
+  "master-1" => {
+    "hostname" => "master-1" + DOMAIN,
+	"group" => "master",
+    "ip" => INTERNAL_NET + "160",
+    "cpu" => "2",
+    "ram" => "800",
+	"box" => "generic/ubuntu2204",
+    "hdd_name" => ["db2_hdd.vdi", "diskx"],
+    "hdd_size" => "10000"
+  }#,
+  #"worker-1" => {
+  #  "hostname" => "worker-1" + DOMAIN,
+#	"group" => "worker",
+#    "ip" => INTERNAL_NET + "161",
+#    "cpu" => "1",
+#    "ram" => "800",
+#	"box" => "generic/ubuntu2204",
+#    "hdd_name" => ["db2_hdd.vdi"],
+#    "hdd_size" => "5000"   
+ # }
+}
+
+Vagrant.configure("2") do |config|
+  #config.vm.box = "generic/ubuntu2204"
+
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  config.vm.box_check_update = false
+
+  config.trigger.before :up do |trigger|
+    trigger.info = "Creating 'NATSwitch' Hyper-V switch if it does not exist..."
+
+    trigger.run = {privileged: "true", powershell_elevated_interactive: "true", path: "./create-nat-hyperv-switch.ps1"}
+  end
+
+  config.trigger.before :reload do |trigger|
+    trigger.info = "Setting Hyper-V switch to 'NATSwitch' to allow for static IP..."
+
+    trigger.run = {privileged: "true", powershell_elevated_interactive: "true", path: "./set-hyperv-switch.ps1"}
+  end
+
+  config.vm.provision :reload
+  
+  #config.vm.ssh.keep_alive = true
+
+  config.vm.synced_folder ".", "/vagrant_data", disabled: true
+
+  #config.vm.provider "hyperv"
+
+  servers.each do |host, value| 
+    config.vm.define host do |node|
+	  node.vm.box = value["box"]
+	  #node.vm.boot_timeout = 240
+	  node.vm.network "public_network", bridge: "vSwitch0"
+	  node.vm.hostname = value["hostname"]
+	  #node.vm.disk :disk, size: "20GB", primary: true
+	  node.vm.provider "hyperv" do |h|
+		h.cpus = value["cpu"]
+		h.memory = value["ram"]
+		h.vmname = host
+		#if value["group"] == "lb"
+		h.enable_virtualization_extensions = true
+        h.linked_clone = true
+		#end
+	  end
+	  node.vm.provision "shell", run: "once" do |s|
+        s.path = "ip.sh"
+        s.args = [host, value["ip"]]
+      end
+    end
+  end
+end
